@@ -150,7 +150,7 @@ PyObject *hscpython_Py_False()
 
 /* Unicode */
 Py_ssize_t hscpython_PyUnicode_GetSize(PyObject *o)
-{ return PyUnicode_GetSize(o); }
+{ return PyUnicode_GET_LENGTH(o); }
 
 Py_UNICODE *hscpython_PyUnicode_AsUnicode(PyObject *o)
 { return PyUnicode_AsUnicode(o); }
