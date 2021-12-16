@@ -74,6 +74,10 @@ module CPython.Internal
   , Iterator (..)
   , SomeIterator (..)
   , unsafeCastToIterator
+
+  -- * Thread safety
+  , withGIL
+  , withLock
   ) where
 
 #include <hscpython-shim.h>
@@ -85,6 +89,22 @@ import           Foreign hiding (newForeignPtr, newForeignPtr_)
 import           Foreign.C
 import           Foreign.Concurrent(newForeignPtr)
 import           System.IO.Unsafe (unsafePerformIO)
+import           Control.Exception (bracket)
+import           Control.Concurrent.QSem
+import           Control.Exception (bracket_)
+import           System.IO.Unsafe (unsafePerformIO)
+import           Data.IORef
+import qualified Control.Concurrent.RLock as RLock
+
+lock :: RLock.RLock
+{-# NOINLINE lock #-}
+lock = unsafePerformIO $ RLock.new
+
+withLock :: IO a -> IO a
+withLock f = bracket_ (RLock.acquire lock) (RLock.release lock) f
+
+withGIL :: IO a -> IO a
+withGIL = withLock
 
 cToBool :: CInt -> Bool
 cToBool = (/= 0)
@@ -102,13 +122,13 @@ peekMaybeTextW :: CWString -> IO (Maybe T.Text)
 peekMaybeTextW = maybePeek peekTextW
 
 withText :: T.Text -> (CString -> IO a) -> IO a
-withText = withCString . T.unpack
+withText t f = withGIL (withCString (T.unpack t) f)
 
 withTextW :: T.Text -> (CWString -> IO a) -> IO a
-withTextW = withCWString . T.unpack
+withTextW t f = withGIL (withCWString (T.unpack t) f)
 
 withMaybeTextW :: Maybe T.Text -> (CWString -> IO a) -> IO a
-withMaybeTextW = maybeWith withTextW
+withMaybeTextW t f = withGIL (maybeWith withTextW t f)
 
 mapWith :: (a -> (b -> IO c) -> IO c) -> [a] -> ([b] -> IO c) -> IO c
 mapWith with' = step [] where
@@ -149,36 +169,45 @@ instance Object Tuple where
   fromForeignPtr = Tuple
 
 withObject :: Object obj => obj -> (Ptr a -> IO b) -> IO b
-withObject obj io = case toObject obj of
+withObject obj io = withGIL $ case toObject obj of
   SomeObject ptr -> withForeignPtr ptr (io . castPtr)
 
 peekObject :: Object obj => Ptr a -> IO obj
-peekObject ptr = E.bracketOnError incPtr decref mkObj where
+peekObject ptr = withGIL $ E.bracketOnError incPtr decref mkObj where
   incPtr = incref ptr >> return ptr
   mkObj _ = fromForeignPtr <$> newForeignPtr (castPtr ptr) (decref ptr)
 
 peekStaticObject :: Object obj => Ptr a -> IO obj
-peekStaticObject ptr = fromForeignPtr <$> newForeignPtr_ (castPtr ptr)
+peekStaticObject ptr = withGIL $ fromForeignPtr <$> newForeignPtr_ (castPtr ptr)
   where
     newForeignPtr_ p = newForeignPtr p (return ())
 
 
 
 unsafeStealObject :: Object obj => Ptr a -> IO obj
-unsafeStealObject ptr = fromForeignPtr <$> newForeignPtr (castPtr ptr) (decref ptr)
+unsafeStealObject ptr = withGIL $ fromForeignPtr <$> newForeignPtr (castPtr ptr) (decref ptr)
 
 stealObject :: Object obj => Ptr a -> IO obj
-stealObject ptr = exceptionIf (ptr == nullPtr) >> unsafeStealObject ptr
+stealObject ptr = withGIL $ exceptionIf (ptr == nullPtr) >> unsafeStealObject ptr
 
-{# fun hscpython_Py_INCREF as incref
+incref :: Ptr a -> IO ()
+incref = withGIL . incref'
+
+{# fun hscpython_Py_INCREF as incref'
   { castPtr `Ptr a'
   } -> `()' id #}
 
-{# fun hscpython_Py_DECREF as decref
+decref :: Ptr a -> IO ()
+decref = withGIL . decref'
+
+{# fun hscpython_Py_DECREF as decref'
   { castPtr `Ptr a'
   } -> `()' id #}
 
-{# fun PyObject_CallObject as callObjectRaw
+callObjectRaw :: (Object self, Object args) => self -> args -> IO SomeObject
+callObjectRaw a b = callObjectRaw' a b
+
+{# fun PyObject_CallObject as callObjectRaw'
   `(Object self, Object args)' =>
   { withObject* `self'
   , withObject* `args'
@@ -202,7 +231,7 @@ instance E.Exception Exception
 
 exceptionIf :: Bool -> IO ()
 exceptionIf False = return ()
-exceptionIf True =
+exceptionIf True = withGIL $
   alloca $ \pType ->
   alloca $ \pValue ->
   alloca $ \pTrace -> do

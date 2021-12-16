@@ -38,17 +38,17 @@ import           CPython.Internal
 -- | Return a 'Dictionary' of the local variables in the current execution
 -- frame, or 'Nothing' if no frame is currently executing.
 getLocals :: IO (Maybe Dictionary)
-getLocals = {# call PyEval_GetLocals as ^#} >>= maybePeek peekObject
+getLocals = withGIL $ {# call PyEval_GetLocals as ^#} >>= maybePeek peekObject
 
 -- | Return a 'Dictionary' of the global variables in the current execution
 -- frame, or 'Nothing' if no frame is currently executing.
 getGlobals :: IO (Maybe Dictionary)
-getGlobals = {# call PyEval_GetGlobals as ^#} >>= maybePeek peekObject
+getGlobals = withGIL $ {# call PyEval_GetGlobals as ^#} >>= maybePeek peekObject
 
 -- | Return the current thread state's frame, which is 'Nothing' if no frame
 -- is currently executing.
 getFrame :: IO (Maybe SomeObject)
-getFrame = {# call PyEval_GetFrame as ^#} >>= maybePeek peekObject
+getFrame = withGIL $ {# call PyEval_GetFrame as ^#} >>= maybePeek peekObject
 
 -- | Return the name of /func/ if it is a function, class or instance object,
 -- else the name of /func/'s type.

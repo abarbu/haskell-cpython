@@ -100,12 +100,12 @@ addObject py name val =
 -- | Add an integer constant to a module. This convenience computation can be
 -- used from the module&#x2019;s initialization computation.
 addIntegerConstant :: Module -> Text -> Integer -> IO ()
-addIntegerConstant m name value = toInteger value >>= addObject m name
+addIntegerConstant m name value = withGIL $ toInteger value >>= addObject m name
 
 -- | Add a string constant to a module. This convenience computation can be
 -- used from the module&#x2019;s initialization computation.
 addTextConstant :: Module -> Text -> Text -> IO ()
-addTextConstant m name value = toUnicode value >>= addObject m name
+addTextConstant m name value = withGIL $ toUnicode value >>= addObject m name
 
 -- | This is a higher-level interface that calls the current &#x201c;import
 -- hook&#x201d; (with an explicit level of @0@, meaning absolute import). It
@@ -115,7 +115,7 @@ addTextConstant m name value = toUnicode value >>= addObject m name
 --
 -- This computation always uses absolute imports.
 importModule :: Text -> IO Module
-importModule name = do
+importModule name = withGIL $ do
   pyName <- toUnicode name
   withObject pyName $ \namePtr ->
     {# call PyImport_Import as ^ #} namePtr

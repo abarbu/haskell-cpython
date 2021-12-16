@@ -37,6 +37,7 @@ library
       base >= 4.0 && < 5.0
     , bytestring >= 0.9
     , text
+    , concurrent-extra
 
   build-tools:
     c2hs >= 0.15

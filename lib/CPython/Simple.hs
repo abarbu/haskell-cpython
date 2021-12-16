@@ -25,6 +25,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 
 import qualified CPython as Py
+import qualified CPython.Internal as Py
 import qualified CPython.Protocols.Object as Py
 import qualified CPython.Types as Py
 import qualified CPython.Types.Module as Py
@@ -59,7 +60,7 @@ initialize = Py.initialize
 --
 -- Throws an exception if e.g. the module name was misspelled, or isn't installed
 importModule :: Text -> IO Py.Module
-importModule module_ = Py.importModule module_
+importModule module_ = Py.withGIL $ Py.importModule module_
 
 -- | The most common use case of `CPython.Simple` is calling some Python function
 --

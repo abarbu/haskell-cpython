@@ -42,6 +42,7 @@ module CPython
 import           Data.Text (Text)
 
 import           CPython.Internal
+import           Control.Monad
 
 -- | Initialize the Python interpreter. In an application embedding Python,
 -- this should be called before using any other Python/C API computations;
@@ -53,13 +54,16 @@ import           CPython.Internal
 -- is a no-op when called for a second time (without calling 'finalize'
 -- first). There is no return value; it is a fatal error if the initialization
 -- fails.
-{# fun Py_Initialize as initialize
-  {} -> `()' id #}
+initialize = withLock $ do
+    initialize'
+  where {# fun Py_Initialize as initialize'
+   {} -> `()' id #}
 
 -- | Return 'True' when the Python interpreter has been initialized, 'False'
 -- if not. After 'finalize' is called, this returns 'False' until
 -- 'initialize' is called again.
-{# fun Py_IsInitialized as isInitialized
+isInitialized = withLock $ isInitialized'
+  where {# fun Py_IsInitialized as isInitialized'
   {} -> `Bool' #}
 
 -- | Undo all initializations made by 'initialize' and subsequent use of
@@ -88,7 +92,8 @@ import           CPython.Internal
 -- modules may not be freed. Some extensions may not work properly if their
 -- initialization routine is called more than once; this can happen if an
 -- application calls 'initialize' and 'finalize' more than once.
-{# fun Py_Finalize as finalize
+finalize = withGIL finalize'
+  where {# fun Py_Finalize as finalize'
   {} -> `()' id #}
 
 newtype ThreadState = ThreadState (Ptr ThreadState)
@@ -146,7 +151,7 @@ newtype ThreadState = ThreadState (Ptr ThreadState)
 -- APIs (and this is inherent in the way the @PyGILState_*()@ procedures
 -- work). Simple things may work, but confusing behavior will always be near.
 newInterpreter :: IO (Maybe ThreadState)
-newInterpreter = do
+newInterpreter = withGIL $ do
   ptr <- {# call Py_NewInterpreter as ^ #}
   return $ if ptr == nullPtr
     then Nothing
@@ -161,12 +166,12 @@ newInterpreter = do
 -- 'finalize' will destroy all sub-interpreters that haven&#x2019;t been
 -- explicitly destroyed at that point.
 endInterpreter :: ThreadState -> IO ()
-endInterpreter (ThreadState ptr) =
+endInterpreter (ThreadState ptr) = withGIL $
   {# call Py_EndInterpreter as ^ #} $ castPtr ptr
 
 -- | Return the program name set with 'setProgramName', or the default.
 getProgramName :: IO Text
-getProgramName = pyGetProgramName >>= peekTextW
+getProgramName = withGIL $ pyGetProgramName >>= peekTextW
 
 foreign import ccall safe "hscpython-shim.h Py_GetProgramName"
   pyGetProgramName :: IO CWString
@@ -179,7 +184,7 @@ foreign import ccall safe "hscpython-shim.h Py_GetProgramName"
 -- value is @\"python\"@. No code in the Python interpreter will change the
 -- program name.
 setProgramName :: Text -> IO ()
-setProgramName name = withTextW name cSetProgramName
+setProgramName name = withGIL $ withTextW name cSetProgramName
 
 foreign import ccall safe "hscpython-shim.h hscpython_SetProgramName"
   cSetProgramName :: CWString -> IO ()
@@ -193,7 +198,7 @@ foreign import ccall safe "hscpython-shim.h hscpython_SetProgramName"
 -- at build time. The value is available to Python code as @sys.prefix@. It
 -- is only useful on UNIX. See also 'getExecPrefix'.
 getPrefix :: IO Text
-getPrefix = pyGetPrefix >>= peekTextW
+getPrefix = withGIL $ pyGetPrefix >>= peekTextW
 
 foreign import ccall safe "hscpython-shim.h Py_GetPrefix"
   pyGetPrefix :: IO CWString
@@ -229,7 +234,7 @@ foreign import ccall safe "hscpython-shim.h Py_GetPrefix"
 -- programs to share @\/usr\/local@ between platforms while having
 -- @\/usr\/local\/plat@ be a different filesystem for each platform.
 getExecPrefix :: IO Text
-getExecPrefix = pyGetExecPrefix >>= peekTextW
+getExecPrefix = withGIL $ pyGetExecPrefix >>= peekTextW
 
 foreign import ccall safe "hscpython-shim.h Py_GetExecPrefix"
   pyGetExecPrefix :: IO CWString
@@ -239,7 +244,7 @@ foreign import ccall safe "hscpython-shim.h Py_GetExecPrefix"
 -- program name (set by 'setProgramName' above). The value is available to
 -- Python code as @sys.executable@.
 getProgramFullPath :: IO Text
-getProgramFullPath = pyGetProgramFullPath >>= peekTextW
+getProgramFullPath = withGIL $ pyGetProgramFullPath >>= peekTextW
 
 foreign import ccall safe "hscpython-shim.h Py_GetProgramFullPath"
   pyGetProgramFullPath :: IO CWString
@@ -252,7 +257,7 @@ foreign import ccall safe "hscpython-shim.h Py_GetProgramFullPath"
 -- is available to Python code as the list @sys.path@, which may be modified
 -- to change the future search path for loaded modules.
 getPath :: IO Text
-getPath = pyGetPath >>= peekTextW
+getPath = withGIL $ pyGetPath >>= peekTextW
 
 foreign import ccall safe "hscpython-shim.h Py_GetPath"
   pyGetPath :: IO CWString
@@ -268,7 +273,8 @@ foreign import ccall safe "hscpython-shim.h Py_GetPath"
 -- version; the first three characters are the major and minor version
 -- separated by a period. The value is available to Python code as
 -- @sys.version@.
-{# fun Py_GetVersion as getVersion
+getVersion = withGIL getVersion'
+  where {# fun Py_GetVersion as getVersion'
   {} -> `Text' peekText* #}
 
 -- | Return the platform identifier for the current platform. On Unix, this
@@ -277,7 +283,8 @@ foreign import ccall safe "hscpython-shim.h Py_GetPath"
 -- Solaris 2.x, which is also known as SunOS 5.x, the value is @\"sunos5\"@.
 -- On Mac OS X, it is @\"darwin\"@. On Windows, it is @\"win\"@. The value
 -- is available to Python code as @sys.platform@.
-{# fun Py_GetPlatform as getPlatform
+getPlatform = withGIL getPlatform'
+  where {# fun Py_GetPlatform as getPlatform'
   {} -> `Text' peekText* #}
 
 -- | Return the official copyright string for the current Python version,
@@ -288,7 +295,8 @@ foreign import ccall safe "hscpython-shim.h Py_GetPath"
 -- @
 --
 -- The value is available to Python code as @sys.copyright@.
-{# fun Py_GetCopyright as getCopyright
+getCopyright = withGIL getCopyright'
+  where {# fun Py_GetCopyright as getCopyright'
   {} -> `Text' peekText* #}
 
 -- | Return an indication of the compiler used to build the current Python
@@ -300,7 +308,8 @@ foreign import ccall safe "hscpython-shim.h Py_GetPath"
 --
 -- The value is available to Python code as part of the variable
 -- @sys.version@.
-{# fun Py_GetCompiler as getCompiler
+getCompiler = withGIL getCompiler'
+  where {# fun Py_GetCompiler as getCompiler'
   {} -> `Text' peekText* #}
 
 -- | Return information about the sequence number and build date and time of
@@ -312,7 +321,8 @@ foreign import ccall safe "hscpython-shim.h Py_GetPath"
 --
 -- The value is available to Python code as part of the variable
 -- @sys.version@.
-{# fun Py_GetBuildInfo as getBuildInfo
+getBuildInfo = withGIL getBuildInfo'
+  where {# fun Py_GetBuildInfo as getBuildInfo'
   {} -> `Text' peekText* #}
 
 -- | Set @sys.argv@. The first parameter is similar to the result of
@@ -326,7 +336,7 @@ foreign import ccall safe "hscpython-shim.h Py_GetPath"
 -- @sys.path@. If no script is executed (in the case of calling @python -c@
 -- or just the interactive interpreter), the empty string is used instead.
 setArgv :: Text -> [Text] -> IO ()
-setArgv argv0 argv =
+setArgv argv0 argv = withGIL $
   mapWith withTextW (argv0 : argv) $ \textPtrs ->
   let argc = fromIntegral $ length textPtrs in
   withArray textPtrs $ pySetArgv argc
@@ -338,7 +348,7 @@ foreign import ccall safe "hscpython-shim.h PySys_SetArgv"
 -- previous call to 'setPythonHome', or the value of the @PYTHONHOME@
 -- environment variable if it is set.
 getPythonHome :: IO (Maybe Text)
-getPythonHome = pyGetPythonHome >>= peekMaybeTextW
+getPythonHome = withGIL $ pyGetPythonHome >>= peekMaybeTextW
 
 foreign import ccall safe "hscpython-shim.h Py_GetPythonHome"
   pyGetPythonHome :: IO CWString
@@ -348,7 +358,7 @@ foreign import ccall safe "hscpython-shim.h Py_GetPythonHome"
 -- @/home/\/lib\//python version/@ and @/home/\/lib\//python version/@. No
 -- code in the Python interpreter will change the Python home.
 setPythonHome :: Maybe Text -> IO ()
-setPythonHome name = withMaybeTextW name cSetPythonHome
+setPythonHome name = withGIL $ withMaybeTextW name cSetPythonHome
 
 foreign import ccall safe "hscpython-shim.h hscpython_SetPythonHome"
   cSetPythonHome :: CWString -> IO ()
